@@ -46,5 +46,6 @@ class MainWindow(Gtk.Window):
             # parsed_data = parse_data(data)
             self.file_viewer.display_data(data)
             self.file_viewer.set_root_data(data)
+            self.set_title(f"Torch-Reader - {file_path}")
         
         dialog.destroy()

@@ -7,8 +7,8 @@ PRECISION_DEC = 4
 MAX_LENGTH = 20
 
 def pretty_print(data: Union[torch.Tensor, numpy.ndarray, str]) -> str:
-    if isinstance(data, str):
-        return data
+    if isinstance(data, (str, int, float, bool)):
+        return str(data)
 
     if isinstance(data, torch.Tensor):
         data = data.detach().cpu().numpy()

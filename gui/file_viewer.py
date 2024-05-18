@@ -1,6 +1,8 @@
 import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
+import re
+import traceback
 
 import torch
 import numpy as np
@@ -17,7 +19,7 @@ class FileViewer(Gtk.Box):
         self.paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
         self.pack_start(self.paned, True, True, 0)
         
-        self.tree_store = Gtk.TreeStore(str, str, str)
+        self.tree_store = Gtk.TreeStore(str, str, str, object)
         self.tree_view = Gtk.TreeView(model=self.tree_store)
         
         for i, column_title in enumerate(["Key", "Type", "Shape/Value"]):
@@ -43,6 +45,8 @@ class FileViewer(Gtk.Box):
         self.range_input = Gtk.Entry()
         self.range_input.set_placeholder_text("Select range: [start:end]")
         self.content_box.pack_start(self.range_input, False, False, 0)
+        self.range_input.connect("activate", self.on_range_input_activate)
+
         
         self.content_scrolled_window = Gtk.ScrolledWindow()
         self.content_scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
@@ -74,7 +78,7 @@ class FileViewer(Gtk.Box):
             shape_disp = data
         else:
             shape_disp = ''
-        this = self.tree_store.append(parent, [key, str(type(data)), shape_disp])
+        this = self.tree_store.append(parent, [key, str(type(data)), shape_disp, data])
 
         if isinstance(data, dict):
             for key, value in data.items():
@@ -89,47 +93,61 @@ class FileViewer(Gtk.Box):
             key = model[tree_iter][0]
             data_type = model[tree_iter][1]
             shape_or_value = model[tree_iter][2]
-            self.update_content_textview(key, data_type, shape_or_value)
+            data_object = model[tree_iter][3]
+            self.update_content_textview(key, data_type, shape_or_value, data_object)
+            self.selected_data = data_object
     
-    def update_content_textview(self, key, data_type, shape_or_value):
+    def update_content_textview(
+            self, key: str, data_type: str, 
+            shape_or_value: str, data_object: object):
         buffer = self.content_textview.get_buffer()
         buffer.set_text('')
-        
         # Display the contents of arrays
-        if "torch.Tensor" in data_type or "numpy.ndarray" in data_type:
-            data = self.get_data_from_tree(key)
-            if data is not None:
-                buffer.insert(buffer.get_end_iter(), utils.pretty_print(data))
-                '''
-                if data.ndim == 0:
-                    buffer.insert(buffer.get_end_iter(), str(data.item()))
-                elif data.ndim == 1:
-                    buffer.insert(buffer.get_end_iter(), str(data))
-                elif data.ndim == 2:
-                    for row in data:
-                        buffer.insert(buffer.get_end_iter(), ' '.join(map(str, row)) + '\n')
-                        '''
+        if "Tensor" in data_type or "ndarray" in data_type or \
+                "str" in data_type or "int" in data_type or \
+                "float" in data_type or "bool" in data_type:
+            if data_object is not None:
+                buffer.insert(buffer.get_end_iter(), utils.pretty_print(data_object))
 
-    def get_data_from_tree(self, key):
-        # Traverse the tree to find the data corresponding to the key
-        def traverse(data, key):
-            if isinstance(data, dict):
-                for k, v in data.items():
-                    if k == key:
-                        return v
-                    result = traverse(v, key)
-                    if result is not None:
-                        return result
-            elif isinstance(data, list):
-                for index, value in enumerate(data):
-                    result = traverse(value, key)
-                    if result is not None:
-                        return result
+    def set_buffer_text(self, text: str):
+        buffer = self.content_textview.get_buffer()
+        buffer.set_text(text)
+
+    def display_data_item(self, data):
+        self.set_buffer_text(utils.pretty_print(data))
+
+
+    def on_range_input_activate(self, entry):
+        range_text = entry.get_text()
+        if (santized_range := self.sanitize_range(range_text)):
+            try:
+                # Evaluate the sanitized range expression in a restricted environment
+                selected_data = eval(
+                        f"a[{santized_range}]", 
+                        {"__builtins__": {}, },
+                        {"a": self.selected_data})
+                self.display_data_item(selected_data)
+            except Exception as e:
+                self.set_buffer_text(f"Error evaluating range: a[{santized_range}]\n{repr(e)}")
+                traceback.print_exc()
+        else:
+            self.set_buffer_text("Invalid range input detected")
+
+    def sanitize_range(self, expression: str):
+        # Remove spaces and validate characters
+        sanitized = re.sub(r"\s", "", expression)
+        if len(sanitized) == 0:
             return None
-        
-        # Start traversal from the root data
-        return traverse(self.root_data, key)
+
+        if sanitized[0] == '[' and sanitized[-1] == ']':
+            sanitized = sanitized[1:-1]
+        if re.match(r"^[0-9:\-,]+$", sanitized):
+            return sanitized
+        else:
+            return None
     
     def set_root_data(self, data):
         self.root_data = data
         self.display_data(data)
+
+        self.selected_data = data
